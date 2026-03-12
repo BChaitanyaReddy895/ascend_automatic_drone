@@ -1,0 +1,8 @@
+# ASCEND — Python Dependencies
+# Install on Raspberry Pi: pip3 install -r requirements.txt
+
+pymavlink>=2.4.40
+pyrealsense2>=2.50.0
+opencv-python-headless>=4.5.0
+numpy>=1.21.0
+MAVProxy>=1.8.60

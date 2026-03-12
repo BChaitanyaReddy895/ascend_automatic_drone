@@ -1,0 +1,153 @@
+SOFTWARE REQUIREMENTS SPECIFICATION
+Project: ASCEND
+Version: 1.0
+1. Project Overview
+ASCEND is a fully autonomous micro-quadrotor operating in a GNSS-denied environment.
+The software stack runs on:
+Raspberry Pi 4 (Primary compute – ROS2)
+Pixhawk Flight Controller (Low-level stabilization)
+Servo-mounted TF-Luna LiDAR
+Dual IMU system
+Custom docking station (pogo-pin interface)
+The objective is to build a fault-tolerant autonomous flight software stack capable of completing the defined mission tasks.
+2. Mission Functional Requirements
+TASK 1: Autonomous Vertical Take-Off
+Requirements
+SR-1.1 System shall perform pre-arm safety checks:
+IMU calibration valid
+Battery above minimum threshold
+Communication link active
+SR-1.2 System shall switch to OFFBOARD mode.
+SR-1.3 System shall command vertical ascent to target altitude (configurable 3–6 m).
+SR-1.4 Maximum lateral drift during takeoff ≤ 0.5 m.
+SR-1.5 If instability detected → immediate abort + controlled landing.
+TASK 2: Hover Stability (5 minutes)
+SR-2.1 Maintain altitude within ±0.2 m.
+SR-2.2 Maintain XY drift within ±0.5 m radius.
+SR-2.3 Hover duration ≥ 300 seconds.
+SR-2.4 Use:
+VIO + IMU fusion for pose
+LiDAR for altitude correction
+SR-2.5 If pose uncertainty exceeds threshold:
+Switch to safety mode
+Trigger landing
+TASK 3: Controlled Landing
+SR-3.1 Descent rate ≤ 0.5 m/s.
+SR-3.2 Use LiDAR for ground detection < 1 m.
+SR-3.3 Touchdown detection via:
+Acceleration spike
+Altitude near zero
+SR-3.4 Motors auto-disarm on stable ground detection.
+TASK 4: Safety Demonstration
+Low Battery Return-to-Base (RTB)
+SR-4.1 Continuous battery monitoring at ≥10 Hz.
+SR-4.2 If battery ≤ 20%:
+Interrupt mission
+Switch to RTB state
+Navigate to dock
+SR-4.3 If dock not reachable → controlled landing.
+Communication Loss Handling
+SR-4.4 If no heartbeat from ground station > 3 seconds:
+Switch to autonomous fallback
+SR-4.5 Fallback priority:
+RTB if localization valid
+Controlled landing if localization invalid
+TASK 5: Manual Docking Compatibility
+SR-5.1 Software shall allow manual control override.
+SR-5.2 Dock detection system shall:
+Detect dock marker
+Estimate pose relative to dock
+SR-5.3 Dock alignment tolerance:
+±2 cm lateral
+±5° yaw
+SR-5.4 Software must not resist manual landing.
+TASK 6: Charging (≥5% Increase)
+SR-6.1 On successful docking:
+Detect electrical contact
+Enter CHARGING state
+SR-6.2 Monitor battery level.
+SR-6.3 Confirm ≥5% increase before undocking.
+SR-6.4 Log:
+Start time
+End time
+% increase
+TASK 7: Data Transfer
+SR-7.1 During flight:
+Capture and store images
+Log flight telemetry
+SR-7.2 On docking:
+Automatically initiate data transfer
+Transfer:
+Images
+ROS logs
+Sensor logs
+SR-7.3 Verify transfer via checksum.
+SR-7.4 Confirm transfer completion before charging complete.
+4. Core Software Modules (To Be Implemented)
+4.1 Sensor Fusion Module
+Inputs:
+IMU 1
+IMU 2
+Camera VIO
+LiDAR
+Requirements:
+Dual IMU failover
+Fusion latency ≤ 50 ms
+Publish pose at ≥30 Hz
+4.2 LiDAR Ground Profiling Module
+Servo sweep control
+2D ground profile generation
+Terrain feature extraction
+Must improve feature matching robustness.
+4.3 Mission State Machine
+Mandatory states:
+INIT
+TAKEOFF
+HOVER
+MISSION
+RTB
+LAND
+DOCK_ALIGN
+DOCKED
+CHARGING
+DATA_TRANSFER
+EMERGENCY
+State transitions must be deterministic.
+No circular uncontrolled loops allowed.
+4.4 Dock Detection Module
+Visual marker detection OR feature matching
+Pose estimation relative to dock
+Final descent guidance
+Must operate at ≥15 FPS.
+4.5 Logging System
+Log:
+IMU data
+Battery %
+State transitions
+Pose estimates
+Failure events
+Logs must be timestamped.
+5. Non-Functional Requirements
+Performance
+ROS2 loop ≥30 Hz
+CPU usage ≤80%
+No memory leak
+Reliability
+Navigation failure rate <2%
+System must recover from IMU failure automatically
+Safety
+Hard motor kill switch
+Software emergency stop topic
+Watchdog timer
+6. Constraints
+No GPS allowed
+Must run on Raspberry Pi 4
+Limited compute
+No external positioning system
+7. Deliverables from Software Team
+ROS2 package structure
+Node architecture diagram
+State machine diagram
+Integration with Pixhawk (MAVROS)
+Simulation validation in Gazebo
+Field test report

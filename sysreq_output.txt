@@ -1,0 +1,65 @@
+System Requirements & Implementation Document
+Project: GPS-Denied Autonomous Hover and Auto-Land System
+Platform: ArduPilot (Pixhawk) + Raspberry Pi + Intel RealSense
+1. Project Overview
+The objective of this project is to enable a quadcopter to maintain a stable, autonomous hover at an altitude of 3 to 4 meters in a GPS-denied environment for exactly 60 seconds, followed by an autonomous safe landing. Positioning data will be derived locally using visual odometry and sensor fusion.
+2. Hardware Architecture & Wiring
+This system relies on a Companion Computer (CC) processing high-bandwidth camera data and feeding position estimates to the Flight Controller (FC).
+Flight Controller (FC): Pixhawk 2.4.8 running ArduPilot (firmware supporting EKF3).
+Companion Computer (CC): Raspberry Pi 4B.
+Vision Sensor: Intel RealSense D455.
+Physical Interfaces:
+CC to FC: Raspberry Pi GPIO pins (UART TX/RX) connected to the Pixhawk's Telem2 port.
+Baud Rate: 921600 bps.
+Camera to CC: USB 3.0 connection (mandatory for D455 depth/IMU bandwidth).
+3. System Data Flow (Architecture Pipeline)
+Based on the system design, the processing pipeline is distributed between the RPi and the Pixhawk:
+D455 Camera: Captures Stereo IR/RGB and internal IMU data.
+Optical Flow / Visual Odometry (on RPi): Computes pixel displacement between frames.
+EKF Fusion (on RPi): Fuses the optical flow vectors with the D455's high-frequency IMU data.
+Position Estimate (on RPi): Generates local coordinate outputs $(X, Y, Z)$ and attitude estimates.
+MAVLink Bridge (RPi $\rightarrow$ Pixhawk): Packages the data into a VISION_POSITION_ESTIMATE message and transmits it via Telem2.
+PID Controller (on Pixhawk): ArduPilot's EKF3 ingests the vision data and Barometer data to feed the internal PID loops.
+Motor Commands: The Pixhawk adjusts the ESCs/motors to maintain the hover.
+4. Software Functional Requirements
+The Python software stack running on the Raspberry Pi must accomplish the following three distinct tasks simultaneously:
+Task 1: Hardware Interfacing & Initialization
+MAVLink Connection: Initialize a pymavlink connection on the defined serial port (e.g., /dev/serial0) at 921600 baud. The script must pause and wait for a valid heartbeat from the Pixhawk before proceeding.
+RealSense Pipeline: Initialize the pyrealsense2 pipeline. It must enable the depth stream, infrared/RGB streams (for feature tracking), and the IMU streams (accelerometer and gyroscope).
+Task 2: Flight Logic & Autonomous Hover (Round 1)
+Continuous Odometry: Calculate the local $(X, Y, Z)$ position at a minimum of 20Hz.
+Flight Mode Monitoring: The script must continuously monitor the Pixhawk's current flight mode.
+The Hover Trigger: * The pilot will manually take off in Stabilize mode to a target altitude of 3 to 4 meters.
+The pilot will manually switch the radio transmitter to Loiter mode.
+Upon detecting the switch to LOITER, the script must start a precise 60-second timer.
+During these 60 seconds, the script must ensure uninterrupted transmission of the VISION_POSITION_ESTIMATE messages so the drone holds its exact position.
+Task 3: Autonomous Safe Landing
+Mode Switching: Exactly 60 seconds after entering LOITER mode, the Python script must issue a MAVLink command to change the flight mode to Land (MAV_CMD_NAV_LAND).
+Descent Stability: While the drone is descending, the script must continue sending the VISION_POSITION_ESTIMATE data. This ensures the drone uses the camera to land straight down without horizontal drift.
+5. Required ArduPilot Configuration (Mission Planner)
+To ensure the Pixhawk's Extended Kalman Filter (EKF3) accepts the MAVLink messages from the Raspberry Pi, the following parameters must be written to the FC:
+Parameter
+Value
+Purpose
+SERIAL2_PROTOCOL
+2
+Enables MAVLink 2 on the Telem2 port.
+SERIAL2_BAUD
+921
+Matches the RPi's 921600 baud rate.
+EK3_SRC1_POSXY
+6
+Tells EKF3 to use "External Navigation" (the camera) for $X, Y$.
+EK3_SRC1_POSZ
+1
+Tells EKF3 to use the Barometer for vertical $Z$ altitude.
+EK3_SRC1_YAW
+6
+Uses the camera's odometry for heading/yaw calculation.
+VISO_TYPE
+1
+Enables the MAVLink visual odometry listener.
+COMPASS_USE
+0
+Disables the compass to prevent magnetic interference indoors.
+Flow diagram architecture:

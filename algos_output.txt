@@ -1,0 +1,21 @@
+ASCEND Project - Complete Software List of Algorithms Documentation
+This document presents the finalized and efficient algorithms used in the GNSS-denied autonomous aerial scout system. The architecture is designed around the following sensors:
+1) 3D LiDAR2) IMU1 (Accelerometer, Gyroscope, Magnetometer)3) IMU2 (Redundancy)4) Optical Flow Sensor5) Wi-Fi Module (Wireless Data Transfer)
+Module 1: State Estimation (Localization Without GPS)
+Algorithms Used:1. Multi-Sensor Extended Kalman Filter (EKF)2. LiDAR-based SLAM (LOAM / Cartographer approach)Sensors Used:1) IMU1 + IMU22) Optical Flow3) 3D LiDARFunction:1) Fuse inertial motion with optical flow displacement.2) Use LiDAR SLAM to minimize drift.3) Estimate 3D position relative to takeoff dock.
+Module 2: Attitude & Stability Control
+Algorithms Used:1. Complementary Filter for IMU Fusion2. PID Controller (Roll, Pitch, Yaw)Sensors Used:1) IMU12) IMU2 (Cross-validation)
+Function:1) Maintain stable orientation.2) Reject sensor noise.
+Module 3: Coverage Path Planning(To check how much area to be covered by taking the output of EKF)
+Algorithm Used:1. Boustrophedon Coverage Planning (Zig-Zag Sweep)Input:1) Position estimate from EKFFunction:1) Ensure complete mission area coverage.2) Minimize redundancy.
+Module 4: Terrain & Obstacle Detection
+Algorithms Used:1. LiDAR Point Cloud Processing2. Voxel Grid Downsampling3. Height Variance Threshold DetectionSensor Used:1) 3D LiDARFunction:1) Detect slopes, pits, raised terrain.2) Identify obstacles.3) Generate local elevation awareness.
+Module 5: Energy Monitoring & Return-To-Base (RTB)
+Algorithms Used:1. Energy Margin Estimator2. Vector Navigation to Dock (Local Coordinate System)Inputs:1) Battery telemetry2) Current positionFunction:1) Compute safe return condition.2) Navigate back to stored (0,0,0) dock coordinate.
+Module 6: Dock Detection & Precision Landing
+Algorithms Used:1. LiDAR Geometry-Based Dock Detection2. Distance Symmetry Alignment3. PID Controlled DescentSensors Used:1) 3D LiDAR2) IMUFunction:1) Detect docking structure using LiDAR scan.2) Align based on symmetric distance readings.3) Perform stable landing.
+Module 7: Wireless Data Transfer (Wi-Fi Based)
+Communication Method:Wi-Fi TCP/IP Socket CommunicationAlgorithms Used:1. TCP Reliable Data Transfer2. File Fragmentation & Reassembly3. SHA-256 Checksum VerificationFunction:1) Establish secure connection to base station.2) Send mission images and logs.3) Ensure reliable delivery using TCP acknowledgements.4) Verify data integrity using SHA-256 hash comparison.
+Mission Control Architecture
+Algorithm Used:Finite State Machine (FSM)
+States:INIT → TAKEOFF → HOVER → MISSION → RTB → DOCK_ALIGN → DOCKED → TRANSFER → READYFunction:1) Control mission flow.2) Handle emergency overrides.

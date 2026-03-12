@@ -1,0 +1,28 @@
+# ArduPilot Parameters for GPS-Denied Visual Odometry
+# Load these in Mission Planner: Config → Full Parameter List → Load from file
+#
+# These configure the Pixhawk's EKF3 to accept VISION_POSITION_ESTIMATE
+# messages from the Raspberry Pi companion computer.
+#
+# ============================================================================
+
+# Enable MAVLink 2 on Telem2 port (where RPi is connected)
+SERIAL2_PROTOCOL,2
+
+# Set Telem2 baud rate to 921600 (matches RPi /dev/serial0 config)
+SERIAL2_BAUD,921
+
+# EKF3 Source 1: Use External Navigation (camera) for X,Y position
+EK3_SRC1_POSXY,6
+
+# EKF3 Source 1: Use Barometer for Z altitude (more reliable than camera depth)
+EK3_SRC1_POSZ,1
+
+# EKF3 Source 1: Use External Navigation (camera) for yaw/heading
+EK3_SRC1_YAW,6
+
+# Enable MAVLink visual odometry listener
+VISO_TYPE,1
+
+# Disable compass (prevents magnetic interference in indoor environments)
+COMPASS_USE,0
