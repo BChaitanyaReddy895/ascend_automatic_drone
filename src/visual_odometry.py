@@ -19,11 +19,21 @@ from src.config import (
     FEATURE_QUALITY_LEVEL,
     FEATURE_MIN_DISTANCE,
     FEATURE_BLOCK_SIZE,
-    MIN_FEATURES_THRESHOLD,
+    VO_USE_CLAHE,
+    VO_CLAHE_CLIP,
+    VO_CLAHE_GRID,
     CAMERA_FX,
     CAMERA_FY,
     CAMERA_CX,
     CAMERA_CY,
+    MIN_FEATURES_THRESHOLD,
+    VO_MIN_ALTITUDE,
+    VO_MAX_ALTITUDE,
+    VO_XY_SCALE,
+    VO_Z_SCALE,
+    VO_INVERT_X,
+    VO_INVERT_Y,
+    VO_SWAP_XY,
 )
 
 
@@ -75,6 +85,9 @@ class VisualOdometry:
         self._cx = CAMERA_CX
         self._cy = CAMERA_CY
 
+        # CLAHE for contrast enhancement
+        self._clahe = cv2.createCLAHE(clipLimit=VO_CLAHE_CLIP, tileGridSize=VO_CLAHE_GRID)
+
         # Frame counter
         self._frame_count = 0
 
@@ -82,19 +95,17 @@ class VisualOdometry:
     # Main Update
     # -------------------------------------------------------------------------
 
-    def update(self, ir_frame, depth_frame):
+    def update(self, ir_frame_raw, depth_frame):
         """
         Process a new frame pair and compute incremental motion.
-
-        Args:
-            ir_frame: Grayscale IR image (numpy array, H×W, uint8).
-            depth_frame: Depth image (numpy array, H×W, uint16 in mm).
-
-        Returns:
-            Tuple (dx, dy, dz) incremental displacement in meters,
-            or (0, 0, 0) if tracking not possible yet.
         """
         self._frame_count += 1
+        
+        # 0. Pre-process IR frame for better contrast
+        if VO_USE_CLAHE:
+            ir_frame = self._clahe.apply(ir_frame_raw)
+        else:
+            ir_frame = ir_frame_raw.copy()
 
         # First frame — just detect features
         if self._prev_frame is None:
@@ -131,44 +142,58 @@ class VisualOdometry:
         good_curr = curr_points[good_mask]
 
         if len(good_prev) < 5:
+            self._log(f"Tracking LOST (only {len(good_prev)} points). Re-detecting...", level="WARNING")
             self._prev_frame = ir_frame.copy()
             self._prev_points = self._detect_features(ir_frame)
             return 0.0, 0.0, 0.0
 
-        # Compute 3D motion from 2D pixel displacements using a Global Altitude model
-        # 1. Get stable global altitude from the median depth of the frame
+        # 1. Estimate current altitude from depth center
         h, w = depth_frame.shape
-        center_crop = depth_frame[h//4:3*h//4, w//4:3*w//4]
-        valid_depths = center_crop[center_crop > 0]
+        center_d_mm = depth_frame[h // 2, w // 2]
+        current_alt_m = center_d_mm / 1000.0 if center_d_mm > 0 else VO_MIN_ALTITUDE
         
-        if valid_depths.size > 0:
-            current_alt_m = np.median(valid_depths) / 1000.0
-        else:
-            current_alt_m = 0.0
-
-        # 2. Compute XY displacements scaled by this altitude
-        dx_cam, dy_cam = self._compute_xy_displacement(
-            good_prev, good_curr, current_alt_m
+        if self._frame_count % 30 == 0:
+            avg_dx = np.mean(good_curr[:, 0, 0] - good_prev[:, 0, 0]) if len(good_prev) > 0 else 0
+            avg_dy = np.mean(good_curr[:, 0, 1] - good_prev[:, 0, 1]) if len(good_prev) > 0 else 0
+            # Calculate average brightness to check if IR laser is working
+            avg_bright = np.mean(ir_frame)
+            self._log(f"VO Status: features={len(good_prev)}, alt={current_alt_m:.2f}m, flow=({avg_dx:.2f}, {avg_dy:.2f}), IR_bright={avg_bright:.1f}")
+            
+            if avg_bright < 10:
+                self._log("CRITICAL: IR Image is too dark! Tracking will FAIL. Check IR Laser.", level="ERROR")
+        
+        # 2. Compute 3D incremental motion (dx, dy, dz)
+        # We use Global Altitude for XY scaling (stable) 
+        # but we use feature-delta-median for Z as requested.
+        dx_cam, dy_cam, dz_cam = self._compute_delta_motion(
+            good_prev, good_curr, depth_frame, current_alt_m
         )
-
-        # 3. Handle Z (Altitude change)
+        
+        # 3. Handle Altitude (absolute for display, incremental for pos)
         if not hasattr(self, '_prev_alt_m'):
             self._prev_alt_m = current_alt_m
-        
-        dz_cam = current_alt_m - self._prev_alt_m
         self._prev_alt_m = current_alt_m
 
-        # 4. Correct Coordinate Frame (Camera -> Drone Body NED)
-        # Assuming camera top faces Drone Front and points DOWN:
-        # Features move DOWN (+V) -> Drone moves FORWARD (+X)
-        # Features move LEFT (-U) -> Drone moves RIGHT (+Y)
-        dx = dy_cam    # Forward movement
-        dy = -dx_cam   # Right movement
-        dz = -dz_cam   # Altitude increase (pos dz_cam) -> Z becomes more negative (NED)
+        # 4. Global Scaling & NED Rotation
+        # 4.1 Apply simple scaling
+        dx_val = dx_cam * VO_XY_SCALE  # Image DOWN -> Drone FORWARD (+X)
+        dy_val = dy_cam * VO_XY_SCALE # Image RIGHT -> Drone LEFT (-Y)
+        dz_val = -dz_cam * VO_Z_SCALE   # Alt Increase -> Z Decrease (-Z)
+        
+        # 4.2 Apply calibration flags from config.py
+        if VO_SWAP_XY:
+            dx_val, dy_val = dy_val, dx_val
+        
+        if VO_INVERT_X:
+            dx_val = -dx_val
+            
+        if VO_INVERT_Y:
+            dy_val = -dy_val
 
-        # Filter sudden jumps (outlier rejection)
-        if abs(dx) > 1.0 or abs(dy) > 1.0 or abs(dz) > 0.5:
-            return 0.0, 0.0, 0.0
+        # Final NED values
+        dx = dx_val
+        dy = dy_val
+        dz = dz_val
 
         # Update accumulated position
         self.position[0] += dx
@@ -210,8 +235,18 @@ class VisualOdometry:
     # -------------------------------------------------------------------------
 
     def _create_reflection_mask(self, frame):
-        """Create a mask to ignore extremely bright reflections."""
+        """Create a mask to ignore extremely bright reflections and image edges (like drone landing gear)."""
         _, mask = cv2.threshold(frame, 240, 255, cv2.THRESH_BINARY_INV)
+        
+        # Mask out outer 15% to avoid tracking drone's own legs/frame
+        h, w = frame.shape
+        margin_h = int(h * 0.15)
+        margin_w = int(w * 0.15)
+        mask[0:margin_h, :] = 0
+        mask[h-margin_h:, :] = 0
+        mask[:, 0:margin_w] = 0
+        mask[:, w-margin_w:] = 0
+        
         return mask
 
     def _detect_features(self, frame, mask=None):
@@ -222,27 +257,49 @@ class VisualOdometry:
     # Metric Motion Computation
     # -------------------------------------------------------------------------
 
-    def _compute_xy_displacement(self, prev_pts, curr_pts, altitude_m):
+    def _compute_delta_motion(self, prev_pts, curr_pts, depth_frame, altitude_m):
         """
-        Convert average 2D pixel flow to metric XY movement.
+        Compute metric displacement by combining optical flow and depth.
         """
-        if altitude_m <= 0.1:  # Too close to ground or invalid
-            return 0.0, 0.0
+        dx_list = []
+        dy_list = []
+        dz_list = []
+        
+        h, w = depth_frame.shape
+        
+        # Constants for Z-check
+        depth_min_mm = int(VO_MIN_ALTITUDE * 1000)
+        depth_max_mm = int(VO_MAX_ALTITUDE * 1000)
 
-        # Calculate pixel displacements
-        du_list = curr_pts[:, 0] - prev_pts[:, 0]
-        dv_list = curr_pts[:, 1] - prev_pts[:, 1]
+        for i in range(len(prev_pts)):
+            u_prev = prev_pts[i].flatten()
+            u_curr = curr_pts[i].flatten()
+            
+            # Pixel Flow
+            du = u_curr[0] - u_prev[0]
+            dv = u_curr[1] - u_prev[1]
+            
+            # 1. XY Motion: Scale by global altitude for stability
+            if altitude_m > 0.1:
+                dx_list.append((du / self._fx) * altitude_m)
+                dy_list.append((dv / self._fy) * altitude_m)
+            
+            # 2. Z Motion: Use incremental feature-depth change (user preference)
+            px, py = int(u_prev[0]), int(u_prev[1])
+            cx, cy = int(u_curr[0]), int(u_curr[1])
+            
+            if 0 <= px < w and 0 <= py < h and 0 <= cx < w and 0 <= cy < h:
+                d_prev = int(depth_frame[py, px])
+                d_curr = int(depth_frame[cy, cx])
+                
+                if depth_min_mm < d_prev < depth_max_mm and depth_min_mm < d_curr < depth_max_mm:
+                    dz_list.append((d_curr - d_prev) / 1000.0)
 
-        # Median pixel flow for robustness
-        du_median = np.median(du_list)
-        dv_median = np.median(dv_list)
-
-        # Scale by altitude and focal length
-        # metric = (pixel / focal_length) * depth
-        dx_cam = (du_median / self._fx) * altitude_m
-        dy_cam = (dv_median / self._fy) * altitude_m
-
-        return dx_cam, dy_cam
+        dx = float(np.median(dx_list)) if dx_list else 0.0
+        dy = float(np.median(dy_list)) if dy_list else 0.0
+        dz = float(np.median(dz_list)) if dz_list else 0.0
+        
+        return dx, dy, dz
 
     # -------------------------------------------------------------------------
     # Utility

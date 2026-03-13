@@ -115,7 +115,7 @@ class MissionLogger:
 
         with self._lock:
             # Console output
-            print(line)
+            print(line, flush=True)
 
             # File output
             try:

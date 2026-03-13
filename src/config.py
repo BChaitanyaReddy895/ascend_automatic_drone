@@ -5,11 +5,11 @@ All tunable parameters for MAVLink, RealSense, EKF, flight logic,
 and SSH/WiFi settings are defined here.
 """
 
+import os
+
 # =============================================================================
 # MAVLink / Pixhawk Connection
 # =============================================================================
-
-import os
 
 # Serial port on Raspberry Pi connected to Pixhawk Telem2
 MAVLINK_SERIAL_PORT = "/dev/serial0"
@@ -25,31 +25,26 @@ PIXHAWK_COMPID = 1         # Pixhawk component ID (default)
 HEARTBEAT_INTERVAL = 1.0
 
 # =============================================================================
-# MAVProxy UDP Bridge (for WiFi ground station forwarding)
-# =============================================================================
-
-# When MAVProxy runs on the RPi, it bridges serial → UDP
-# Your laptop can connect a GCS to this UDP endpoint over WiFi
-MAVPROXY_UDP_OUT = "udpout:0.0.0.0:14550"
-MAVPROXY_UDP_IN = "udpin:0.0.0.0:14551"
-
-# =============================================================================
 # Intel RealSense D455 Configuration
 # =============================================================================
 
-# Depth stream
+# Resolution & Framerate (Native D455 480p profile)
 RS_DEPTH_WIDTH = 640
-RS_DEPTH_HEIGHT = 360
-RS_DEPTH_FPS = 15
+RS_DEPTH_HEIGHT = 480    # 480p is a native, stable profile for the D455
+RS_DEPTH_FPS = 30
 
-# Infrared stream (used for optical flow feature tracking)
 RS_IR_WIDTH = 640
-RS_IR_HEIGHT = 360
-RS_IR_FPS = 15
+RS_IR_HEIGHT = 480       # 480p is a native, stable profile for the D455
+RS_IR_FPS = 30
 
-# IMU streams (accelerometer + gyroscope)
-RS_ACCEL_FPS = 63        # Hardware native: 63, 250
-RS_GYRO_FPS = 200        # Hardware native: 200, 400
+# IMU streams (Maximized for higher FPS stability)
+RS_ACCEL_FPS = 250       # Hardware native: 63, 250
+RS_GYRO_FPS = 400        # Hardware native: 200, 400
+
+# Image Processing
+VO_USE_CLAHE = True      # Enhance contrast for plain tiles
+VO_CLAHE_CLIP = 4.0      # Contrast limit
+VO_CLAHE_GRID = (8, 8)   # Grid size for adaptive equalization
 
 # =============================================================================
 # Visual Odometry (Optical Flow)
@@ -59,85 +54,92 @@ RS_GYRO_FPS = 200        # Hardware native: 200, 400
 LK_WIN_SIZE = (21, 21)
 LK_MAX_LEVEL = 3
 LK_CRITERIA = {
-    "type": "EPS_COUNT",   # cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT
+    "type": "EPS_COUNT",
     "max_iter": 30,
     "epsilon": 0.01,
 }
 
 # Feature detection (Shi-Tomasi corners)
-FEATURE_MAX_CORNERS = 200
-FEATURE_QUALITY_LEVEL = 0.05   # Higher quality for better tracking on tiles
-FEATURE_MIN_DISTANCE = 10
+FEATURE_MAX_CORNERS = 300      # High count for better median stability
+FEATURE_QUALITY_LEVEL = 0.001  # VERY sensitive — track even micro-texture
+FEATURE_MIN_DISTANCE = 5       # Pack features closer if needed
 FEATURE_BLOCK_SIZE = 7
 
-# Minimum number of tracked features before re-detection
-MIN_FEATURES_THRESHOLD = 50
+# Corrected Feature Params for tracker
+FEATURE_PARAMS = {
+    "maxCorners": FEATURE_MAX_CORNERS,
+    "qualityLevel": FEATURE_QUALITY_LEVEL,
+    "minDistance": FEATURE_MIN_DISTANCE,
+    "blockSize": FEATURE_BLOCK_SIZE,
+}
 
-# Camera intrinsics (D455 defaults — update after calibration)
-# focal length in pixels, principal point in pixels
-CAMERA_FX = 382.0
-CAMERA_FY = 382.0
-CAMERA_CX = 320.0
+# Visual Odometry Calibration
+VO_XY_SCALE = 2.0              # Increase this if drone under-corrects
+VO_Z_SCALE = 1.0               # Corrected for 3m vs 14m reporting
+VO_MIN_ALTITUDE = 0.2          # Meters
+VO_MAX_ALTITUDE = 5.0          # Meters (Limit to avoid ceiling/reflection noise)
+
+# Orientation Calibration (Fixes Drift Directions)
+VO_INVERT_X = False            # Set True if Forward/Backward is flipped
+VO_INVERT_Y = False            # Set True if Left/Right is flipped
+VO_SWAP_XY = False             # Set True if X/Y axes are swapped
+
+# Minimum number of tracked features before re-detection
+MIN_FEATURES_THRESHOLD = 30    # Re-detect sooner to maintain density
+
+# Camera intrinsics (Native 640x480 center)
+CAMERA_FX = 387.5
+CAMERA_FY = 387.5
+CAMERA_CX = 320.7
 CAMERA_CY = 240.0
 
 # =============================================================================
 # EKF Sensor Fusion
 # =============================================================================
 
-# Process noise covariance (tune based on flight tests)
-EKF_PROCESS_NOISE_POS = 0.01       # Position uncertainty growth per step
-EKF_PROCESS_NOISE_VEL = 0.5        # Increased for faster convergence without IMU
+# Process noise covariance
+EKF_PROCESS_NOISE_POS = 0.01
+EKF_PROCESS_NOISE_VEL = 2.0        # Increased for much faster reactiveness
+                                   # (Prevents "late" feeling in telemetry)
 
 # Measurement noise covariance
-EKF_MEASUREMENT_NOISE_VO = 0.05    # Visual odometry measurement noise
-EKF_MEASUREMENT_NOISE_IMU = 0.02   # IMU measurement noise
+EKF_MEASUREMENT_NOISE_VO = 0.01    # Trust vision more for real-time tracking
+EKF_MEASUREMENT_NOISE_IMU = 0.02
 
 # Initial state uncertainty
 EKF_INITIAL_COVARIANCE = 1.0
 
 # =============================================================================
-# Flight Logic
+# Flight Logic (ArduPilot Friendly)
 # =============================================================================
 
-# Hover duration in seconds after LOITER mode is detected
+# Mission Parameters
 HOVER_DURATION_SEC = 60.0
+VISION_SEND_RATE_HZ = 20           # Continuous data stream rate
 
 # Target altitude range (meters) — pilot takes off manually to this
 TARGET_ALTITUDE_MIN = 3.0
 TARGET_ALTITUDE_MAX = 4.0
 
-# Vision position estimate send rate (Hz)
-VISION_SEND_RATE_HZ = 20
-
-# Landing detection thresholds
-LANDING_ALTITUDE_THRESHOLD = 0.15    # meters — consider landed below this
-LANDING_VELOCITY_THRESHOLD = 0.05    # m/s — consider stationary below this
-
-# Flight modes (ArduPilot mode numbers)
+# Mode Definitions
 MODE_STABILIZE = 0
 MODE_LOITER = 5
 MODE_LAND = 9
 MODE_GUIDED = 4
 
+# Landing Thresholds
+LANDING_ALTITUDE_THRESHOLD = 0.15
+LANDING_VELOCITY_THRESHOLD = 0.05
+
 # =============================================================================
-# Logging
+# Logging & Network
 # =============================================================================
 
 LOG_DIRECTORY = os.path.expanduser("~/ascend_logs")
-LOG_LEVEL = "INFO"           # DEBUG, INFO, WARNING, ERROR
-LOG_TO_CSV = True            # Also write telemetry to CSV
-LOG_CSV_RATE_HZ = 10         # CSV logging rate
+LOG_LEVEL = "INFO"
+LOG_TO_CSV = True
+LOG_CSV_RATE_HZ = 10
 
-# =============================================================================
-# SSH / WiFi / Network
-# =============================================================================
-
-# Default RPi network settings (used by deployment scripts)
 RPI_USERNAME = "ascend"
-RPI_HOSTNAME = "ascend-pi.local"    # Updated to match setup
-RPI_IP = "192.168.137.205"          # Updated to match current session
+RPI_IP = "192.168.137.205"
 RPI_PROJECT_DIR = os.path.expanduser("~/ascend")
-
-# WiFi hotspot settings (if RPi creates its own network)
-WIFI_HOTSPOT_SSID = "ASCEND_DRONE"
-WIFI_HOTSPOT_PASSWORD = "ascend2024"

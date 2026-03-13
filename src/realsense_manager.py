@@ -68,12 +68,13 @@ class RealSenseManager:
         Returns:
             True if pipeline started successfully.
         """
-        self._log("Initializing RealSense D455 pipeline...")
-
         self.pipeline = rs.pipeline()
         self.config = rs.config()
 
-        # Enable depth stream
+        # 0. Clean slate
+        self.config.disable_all_streams()
+
+        # 1. Enable depth stream
         self._log(f"Enabling Depth: {RS_DEPTH_WIDTH}x{RS_DEPTH_HEIGHT} @ {RS_DEPTH_FPS}fps")
         self.config.enable_stream(
             rs.stream.depth,
@@ -82,10 +83,10 @@ class RealSenseManager:
             RS_DEPTH_FPS,
         )
 
-        # Enable infrared stream (left IR camera — best for feature tracking)
+        # Enable infrared stream (left IR camera)
         self._log(f"Enabling Infrared: {RS_IR_WIDTH}x{RS_IR_HEIGHT} @ {RS_IR_FPS}fps")
         self.config.enable_stream(
-            rs.stream.infrared, 1,  # stream index 1 = left IR
+            rs.stream.infrared, 1,
             RS_IR_WIDTH, RS_IR_HEIGHT,
             rs.format.y8,
             RS_IR_FPS,
@@ -110,7 +111,7 @@ class RealSenseManager:
         except Exception as e:
             self._log(f"Warning: Could not pre-query device: {e}", level="WARNING")
 
-        # 3. Enable IMU streams (ONLY if hardware and kernel support it)
+        # 3. Enable IMU streams
         if self.has_imu:
             self._log(f"Enabling IMU (Accel @ {RS_ACCEL_FPS}fps, Gyro @ {RS_GYRO_FPS}fps)")
             try:
@@ -124,11 +125,51 @@ class RealSenseManager:
 
         # Start pipeline
         try:
-            self.profile = self.pipeline.start(self.config)
-            self._log("RealSense pipeline started successfully.")
+            # 4. Conditional Hardware Reset
+            # We only reset if this is the first attempt and we want a clean slate
+            # or if the first attempt fails.
+            try:
+                self.profile = self.pipeline.start(self.config)
+            except Exception as start_err:
+                # If it's already started, we MUST stop it before retrying
+                try: self.pipeline.stop()
+                except: pass
+                
+                self._log(f"Initial start attempt failed: {start_err}. Triggering recovery reset...")
+                
+                # Try to get device to reset it
+                ctx = rs.context()
+                devices = ctx.query_devices()
+                if len(devices) > 0:
+                    devices[0].hardware_reset()
+                    self._log("Hardware reset sent. Waiting for USB re-enumeration (up to 10s)...")
+                    
+                    # Wait for device to disappear and reappear
+                    for i in range(10):
+                        time.sleep(1.0)
+                        ctx = rs.context()
+                        if len(ctx.query_devices()) > 0:
+                            self._log(f"Device re-appeared after {i+1}s.")
+                            break
+                    
+                    # Re-initialize pipeline object to ensure clean state
+                    self.pipeline = rs.pipeline()
+                    self.profile = self.pipeline.start(self.config)
+                else:
+                    raise start_err
 
-            # Create alignment object (align depth to IR)
-            self.align = rs.align(rs.stream.infrared)
+            # Actual Start Success
+            # 5. Disable IR Emitter (Laser) so optical flow doesn't just track static laser dots!
+            try:
+                device = self.profile.get_device()
+                depth_sensor = device.first_depth_sensor()
+                if depth_sensor.supports(rs.option.emitter_enabled):
+                    depth_sensor.set_option(rs.option.emitter_enabled, 0)
+                    self._log("IR Laser Emitter DISABLED to allow normal optical flow tracking.")
+            except Exception as emitter_err:
+                self._log(f"Warning: Could not configure IR emitter: {emitter_err}", level="WARNING")
+
+            self._log("RealSense pipeline started successfully.")
 
             # Log device info
             device = self.profile.get_device()
@@ -139,7 +180,7 @@ class RealSenseManager:
             return True
         except Exception as e:
             self._log(f"Pipeline Start FAILED: {e}", level="ERROR")
-            self._log("TIP: This usually means the USB cable cannot handle the data rate or the resolution is unsupported.", level="WARNING")
+            self._log("TIP: If 'No such device' persists, please physically reconnect the USB cable.", level="WARNING")
             return False
 
     def stop(self):
@@ -155,12 +196,12 @@ class RealSenseManager:
     # Frame Acquisition
     # -------------------------------------------------------------------------
 
-    def get_sensor_data(self, timeout_ms=2000):
+    def get_sensor_data(self, timeout_ms=5000):
         """
         Wait for and return the latest frameset (Images + IMU).
         
         Using a single wait_for_frames call is critical to avoid
-        timeouts on Raspberry Pi.
+        timeouts on Raspberry Pi. Increased timeout to 5s for recovery.
         
         Returns:
             Tuple (ir_frame_np, depth_frame_np, timestamp) or (None, None, None).

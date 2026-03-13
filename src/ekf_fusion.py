@@ -90,7 +90,8 @@ class EKFFusion:
             # D455 IMU Z-axis typically reads ~9.81 when stationary
             accel_corrected = accel - self._gravity
         else:
-            # Constant velocity model (zero acceleration)
+            # NO IMU scenario: Assume balanced forces (net accel = 0)
+            # This prevents the state from thinking it's falling when IMU is missing
             accel_corrected = np.zeros(3)
 
         # State transition matrix F (6×6)

@@ -58,101 +58,65 @@ class FlightController:
     def tick(self):
         """
         Execute one iteration of the flight state machine.
-
-        This should be called at a regular rate (e.g., 10-20 Hz) from
-        the main loop. It reads the current Pixhawk mode and transitions
-        states accordingly.
-
-        Returns:
-            Current FlightState enum value.
+        (Non-blocking, called periodically)
         """
         try:
+            # Always poll the current mode first
+            _, mode_name = self.mav.get_flight_mode()
+
             if self.state == FlightState.INIT:
-                self._handle_init()
+                self._handle_init(mode_name)
 
             elif self.state == FlightState.WAITING_FOR_LOITER:
-                self._handle_waiting_for_loiter()
-
+                if mode_name == "LOITER":
+                    # Transition to HOVERING (Timer starts fresh)
+                    self._hover_start_time = time.time()
+                    self._log("=" * 60)
+                    self._log(f"LOITER MODE DETECTED! Starting {HOVER_DURATION_SEC}s hover timer.")
+                    self._log("=" * 60)
+                    self._transition_to(FlightState.HOVERING)
+                
             elif self.state == FlightState.HOVERING:
-                self._handle_hovering()
+                if mode_name != "LOITER":
+                    # Pilot aborted or switched out of Loiter
+                    self._log(f"Pilot switched out of LOITER (Current: {mode_name}). Resetting mission.")
+                    self._transition_to(FlightState.WAITING_FOR_LOITER)
+                    self._hover_start_time = None
+                else:
+                    self._handle_hovering()
 
             elif self.state == FlightState.LANDING:
-                self._handle_landing()
-
-            elif self.state == FlightState.LANDED:
-                pass  # Terminal state
-
-            elif self.state == FlightState.ERROR:
-                pass  # Terminal state — needs manual intervention
+                # ArduPilot auto-disarms on land
+                if not self.mav.is_armed():
+                    self._log("Mission Successful! Drone disarmed.")
+                    self._transition_to(FlightState.LANDED)
 
         except Exception as e:
-            self._transition_to(FlightState.ERROR)
-            self._error_message = str(e)
             self._log(f"State machine error: {e}", level="ERROR")
+            self._transition_to(FlightState.ERROR)
 
         return self.state
 
-    # -------------------------------------------------------------------------
-    # State Handlers
-    # -------------------------------------------------------------------------
-
-    def _handle_init(self):
-        """
-        INIT state: Verify MAVLink connection is alive and Pixhawk is responding.
-        Transition to WAITING_FOR_LOITER once heartbeat is confirmed.
-        """
-        mode_num, mode_name = self.mav.get_flight_mode()
-        if mode_num is not None:
-            self._log(f"Pixhawk connected. Current mode: {mode_name}")
-            self._log(f"Waiting for pilot to switch to LOITER mode...")
-            self._log(f"(Pilot should take off in STABILIZE to 3-4m, then switch to LOITER)")
+    def _handle_init(self, mode_name):
+        if mode_name:
+            self._log(f"Init Complete. Mode: {mode_name}. Ready for LOITER.")
             self._transition_to(FlightState.WAITING_FOR_LOITER)
-        else:
-            self._log("Waiting for Pixhawk heartbeat...", level="DEBUG")
-
-    def _handle_waiting_for_loiter(self):
-        """
-        WAITING_FOR_LOITER: Continuously poll Pixhawk mode.
-        When LOITER is detected, start the 60-second hover timer.
-        """
-        mode_num, mode_name = self.mav.get_flight_mode()
-
-        if mode_name == "LOITER":
-            self._hover_start_time = time.time()
-            self._log("=" * 60)
-            self._log(f"LOITER MODE DETECTED! Starting {HOVER_DURATION_SEC}s hover timer.")
-            self._log("=" * 60)
-            self._transition_to(FlightState.HOVERING)
-        else:
-            # Still waiting — periodically log the current mode
-            pass
 
     def _handle_hovering(self):
-        """
-        HOVERING: Count down the 60-second hover timer.
-        Vision position estimates continue being sent by the vision thread.
-        When timer expires, command LAND mode.
-        """
-        self._hover_elapsed = time.time() - self._hover_start_time
-        remaining = HOVER_DURATION_SEC - self._hover_elapsed
+        """Count down the hover timer (Non-blocking)."""
+        elapsed = time.time() - self._hover_start_time
+        remaining = HOVER_DURATION_SEC - elapsed
 
         if remaining <= 0:
-            # Timer expired — command landing
-            self._log("=" * 60)
-            self._log(f"HOVER TIMER COMPLETE ({HOVER_DURATION_SEC}s)! Commanding LAND mode.")
-            self._log("=" * 60)
-
-            success = self.mav.set_flight_mode("LAND")
-            if success:
-                self._log("LAND mode command accepted by Pixhawk.")
+            self._log("Hover complete. Commanding LAND...")
+            if self.mav.set_flight_mode("LAND"):
                 self._transition_to(FlightState.LANDING)
-            else:
-                self._log("LAND mode command FAILED — retrying...", level="WARNING")
-                # Will retry on next tick
         else:
-            # Log countdown every 10 seconds
-            if int(remaining) % 10 == 0 and abs(remaining - int(remaining)) < 0.1:
-                self._log(f"Hovering... {int(remaining)}s remaining")
+            # Periodic logging
+            if int(elapsed) > self._hover_elapsed:
+                self._hover_elapsed = int(elapsed)
+                if self._hover_elapsed % 10 == 0:
+                    self._log(f"Hovering... {int(remaining)}s remaining")
 
     def _handle_landing(self):
         """
