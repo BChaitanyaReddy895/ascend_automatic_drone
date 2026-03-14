@@ -43,7 +43,7 @@ RS_GYRO_FPS = 400        # Hardware native: 200, 400
 
 # Image Processing
 VO_USE_CLAHE = True      # Enhance contrast for plain tiles
-VO_CLAHE_CLIP = 4.0      # Contrast limit
+VO_CLAHE_CLIP = 3.0      # Contrast limit
 VO_CLAHE_GRID = (8, 8)   # Grid size for adaptive equalization
 
 # =============================================================================
@@ -51,8 +51,8 @@ VO_CLAHE_GRID = (8, 8)   # Grid size for adaptive equalization
 # =============================================================================
 
 # Lucas-Kanade optical flow parameters
-LK_WIN_SIZE = (21, 21)
-LK_MAX_LEVEL = 3
+LK_WIN_SIZE = (25, 25)
+LK_MAX_LEVEL = 4
 LK_CRITERIA = {
     "type": "EPS_COUNT",
     "max_iter": 30,
@@ -60,9 +60,9 @@ LK_CRITERIA = {
 }
 
 # Feature detection (Shi-Tomasi corners)
-FEATURE_MAX_CORNERS = 300      # High count for better median stability
-FEATURE_QUALITY_LEVEL = 0.001  # VERY sensitive — track even micro-texture
-FEATURE_MIN_DISTANCE = 5       # Pack features closer if needed
+FEATURE_MAX_CORNERS = 500      # High count for better median stability
+FEATURE_QUALITY_LEVEL = 0.0003  # VERY sensitive — track even micro-texture
+FEATURE_MIN_DISTANCE = 4       # Pack features closer if needed
 FEATURE_BLOCK_SIZE = 7
 
 # Corrected Feature Params for tracker
@@ -74,10 +74,10 @@ FEATURE_PARAMS = {
 }
 
 # Visual Odometry Calibration
-VO_XY_SCALE = 2.0              # Increase this if drone under-corrects
-VO_Z_SCALE = 1.0               # Corrected for 3m vs 14m reporting
-VO_MIN_ALTITUDE = 0.2          # Meters
-VO_MAX_ALTITUDE = 5.0          # Meters (Limit to avoid ceiling/reflection noise)
+VO_XY_SCALE = 1.0              # Increase this if drone under-corrects
+VO_Z_SCALE = 0.7               # Corrected for 3m vs 14m reporting
+VO_MIN_ALTITUDE = 0.4          # Meters
+VO_MAX_ALTITUDE = 6.0          # Meters (Limit to avoid ceiling/reflection noise)
 
 # Orientation Calibration (Fixes Drift Directions)
 VO_INVERT_X = False            # Set True if Forward/Backward is flipped
@@ -85,7 +85,10 @@ VO_INVERT_Y = False            # Set True if Left/Right is flipped
 VO_SWAP_XY = False             # Set True if X/Y axes are swapped
 
 # Minimum number of tracked features before re-detection
-MIN_FEATURES_THRESHOLD = 30    # Re-detect sooner to maintain density
+MIN_FEATURES_THRESHOLD = 25
+MIN_GOOD_FLOW_FRACTION = 0.35
+MAX_FLOW_MAG_PIX = 40.0
+MAX_DZ_M = 0.8    # Re-detect sooner to maintain density
 
 # Camera intrinsics (Native 640x480 center)
 CAMERA_FX = 387.5
@@ -98,12 +101,12 @@ CAMERA_CY = 240.0
 # =============================================================================
 
 # Process noise covariance
-EKF_PROCESS_NOISE_POS = 0.01
-EKF_PROCESS_NOISE_VEL = 2.0        # Increased for much faster reactiveness
+EKF_PROCESS_NOISE_POS = 0.015
+EKF_PROCESS_NOISE_VEL = 3.0        # Increased for much faster reactiveness
                                    # (Prevents "late" feeling in telemetry)
 
 # Measurement noise covariance
-EKF_MEASUREMENT_NOISE_VO = 0.01    # Trust vision more for real-time tracking
+EKF_MEASUREMENT_NOISE_VO = 0.03    # Trust vision more for real-time tracking
 EKF_MEASUREMENT_NOISE_IMU = 0.02
 
 # Initial state uncertainty

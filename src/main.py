@@ -73,6 +73,10 @@ def vision_thread(realsense, vo, ekf, logger):
             # 2. Compute visual odometry
             dx, dy, dz = vo.update(ir_frame, depth_frame)
 
+            if abs(dx) > 1.2 or abs(dy) > 1.2 or abs(dz) > 0.8:
+                logger.log("Large VO step - possible outlier - zeroing", source="Vision", level="WARNING")
+                dx = dy = dz = 0.0
+
             # 3. Get IMU data (now updated internally by get_sensor_data)
             accel, gyro, imu_ts = realsense.get_imu_data()
 

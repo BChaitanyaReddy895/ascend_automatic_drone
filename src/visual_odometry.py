@@ -147,10 +147,26 @@ class VisualOdometry:
             self._prev_points = self._detect_features(ir_frame)
             return 0.0, 0.0, 0.0
 
-        # 1. Estimate current altitude from depth center
+        # 1. Estimate current altitude from depth central region
         h, w = depth_frame.shape
-        center_d_mm = depth_frame[h // 2, w // 2]
-        current_alt_m = center_d_mm / 1000.0 if center_d_mm > 0 else VO_MIN_ALTITUDE
+        cy, cx = h // 2, w // 2
+        margin_h = int(0.30 * h)
+        margin_w = int(0.30 * w)
+        roi = depth_frame[
+            cy - margin_h : cy + margin_h,
+            cx - margin_w : cx + margin_w
+        ]
+        
+        valid = (roi > int(VO_MIN_ALTITUDE * 1000)) & (roi < int(VO_MAX_ALTITUDE * 1000))
+        valid_depths = roi[valid]
+        
+        if len(valid_depths) > 200:
+            current_alt_m = float(np.median(valid_depths)) / 1000.0
+        elif len(valid_depths) > 50:
+            current_alt_m = float(np.mean(valid_depths)) / 1000.0
+        else:
+            current_alt_m = 3.0  # safe fallback when depth fails
+            self._log("Low valid depth points - using fallback altitude", level="WARNING")
         
         if self._frame_count % 30 == 0:
             avg_dx = np.mean(good_curr[:, 0, 0] - good_prev[:, 0, 0]) if len(good_prev) > 0 else 0
@@ -238,10 +254,10 @@ class VisualOdometry:
         """Create a mask to ignore extremely bright reflections and image edges (like drone landing gear)."""
         _, mask = cv2.threshold(frame, 240, 255, cv2.THRESH_BINARY_INV)
         
-        # Mask out outer 15% to avoid tracking drone's own legs/frame
+        # Mask out outer 20% to avoid tracking drone's own legs/frame
         h, w = frame.shape
-        margin_h = int(h * 0.15)
-        margin_w = int(w * 0.15)
+        margin_h = int(h * 0.20)
+        margin_w = int(w * 0.20)
         mask[0:margin_h, :] = 0
         mask[h-margin_h:, :] = 0
         mask[:, 0:margin_w] = 0
@@ -298,6 +314,14 @@ class VisualOdometry:
         dx = float(np.median(dx_list)) if dx_list else 0.0
         dy = float(np.median(dy_list)) if dy_list else 0.0
         dz = float(np.median(dz_list)) if dz_list else 0.0
+        
+        if len(dx_list) < 15 or len(dy_list) < 15:
+            self._log("Too few valid flow vectors - skipping update", level="WARNING")
+            return 0.0, 0.0, 0.0
+
+        if abs(dx) > 1.5 or abs(dy) > 1.5 or abs(dz) > 1.0:
+            self._log(f"Large motion rejected: dx={dx:.2f}, dy={dy:.2f}, dz={dz:.2f}", level="WARNING")
+            return 0.0, 0.0, 0.0
         
         return dx, dy, dz
 
